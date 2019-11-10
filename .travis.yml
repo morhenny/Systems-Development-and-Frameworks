@@ -4,6 +4,8 @@ node_js:
 cache:
   directories:
     - node_modules
+before_install:
+  - npm update
 script:
   - cd VueJS
   - npm test
