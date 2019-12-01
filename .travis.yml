@@ -1,0 +1,16 @@
+language: node_js
+node_js:
+  - 9
+cache:
+  directories:
+    - node_modules
+before_install:
+  - cd VueJS
+  - npm update
+install:
+  - npm install
+script:
+  - npm run test
+  - npm run lint
+after_success:
+  - npm run build
