@@ -299,7 +299,6 @@ describe('Mutations for Todos', () => {
 
 describe('Queries and Mutations with login', () => {
     let query;
-    let mutate;
     beforeEach(async () => {
         const loginServer = getMockedApolloServer();
         const loginClient = createTestClient(loginServer);
@@ -312,7 +311,6 @@ describe('Queries and Mutations with login', () => {
         const testServer = getMockedApolloServer(() => { return { token: loginResult.data.login } });
         const testClient = createTestClient(testServer);
         query = testClient.query;
-        mutate = testClient.mutate;
     });
 
     it('Query backdoor', async () => {
