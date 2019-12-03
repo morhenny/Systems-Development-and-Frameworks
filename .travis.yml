@@ -6,8 +6,8 @@ cache:
     - node_modules
 before_install:
   - cd VueJS
-  - npm update
 install:
+  - npm update
   - npm install
 script:
   - npm run test
