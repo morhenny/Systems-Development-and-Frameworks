@@ -18,6 +18,9 @@
     "graphql-tools": "^4.0.6",
     "js-sha256": "^0.9.0",
     "jsonwebtoken": "^8.5.1",
+    "neo4j-driver": "^4.0.1",
+    "neo4j-graphql-js": "^2.10.2",
+    "uuid": "^3.3.3",
     "vue": "^2.6.10",
     "vue-apollo": "^3.0.0-beta.11"
   },
