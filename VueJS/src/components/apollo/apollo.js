@@ -46,6 +46,7 @@ const typeDefs = gql`
   type Query {
     todo(id: ID!): Todo
     todos(text: String, done: Boolean): [Todo]
+    secondTodo: Todo
     user(name: String!): User
     users(admin: Boolean): [User]
     governmentBackdoor(name: String): [User]
@@ -101,6 +102,16 @@ const defaultTodos = [
     }
 ];
 
+const todoFromIdQuery = "MATCH (t:Todo)-[:OWNED_BY]->(u:User)\n" + 
+    "WHERE t.id = $todoid\n" + 
+    "RETURN t, u"
+
+const todoThatsSecond = "MATCH (t:Todo)-[:OWNED_BY]->(u:User)\n" +
+    "RETURN t, u \n" + 
+    "ORDER BY t.id ASC\n" +
+    "SKIP 1\n" +
+    "LIMIT 1"
+
 const userTodosQuery = "MATCH (t:Todo)-[:OWNED_BY]->(u:User)\n" +
     "WHERE u.name = $username\n" +
     "RETURN t, u\n"
@@ -112,12 +123,33 @@ const doneTodosQuery = "MATCH (t:Todo)-[:OWNED_BY]->(u:User)\n" +
     "WHERE t.done = $done\n" +
     "RETURN t, u\n"
 
+const userById = "MATCH (u:User)\n" + 
+    "WHERE u.name = $name\n" +
+    "RETURN u"
+
+const allUsers = "MATCH (u:User)\n" + 
+    "RETURN u"
+
+const allAdminUsers = "MATCH (u:User)\n" + 
+    "WHERE u.admin = $admin\n" +
+    "RETURN u"
+
+const allUsersByName = "MATCH (u:User)\n" + 
+    "WHERE u.name = $name\n" +
+    "RETURN u"
+
 const createTodoMutation = "CREATE (t:Todo {id: $id, text: $text, done: false})"
 
 const createTodoInnerQuery = "MATCH (u:User), (t:Todo)\n" +
     "WHERE u.id = $userid AND t.id = $todoid\n" +
     "CREATE (t)-[r:OWNED_BY]->(u)\n" +
     "RETURN u, type(r), t.id"
+
+const updateTodoMutation = "MATCH (t:Todo)\n" +
+    "WHERE t.id = $id\n" +
+    "SET t.text = $text\n" +
+    "SET t.done = $done\n" + 
+    "RETURN t"
 
 const deleteTodoMutation = "MATCH (t:Todo)-[:OWNED_BY]->(u:User) \n" +
     "WHERE t.id = $id\n" +
@@ -127,8 +159,22 @@ const deleteTodoMutation = "MATCH (t:Todo)-[:OWNED_BY]->(u:User) \n" +
 
 const resolvers = {
     Query: {
-        todo: (parent, args) => {
-            return todoData.find((todo) => todo.id == args.id);
+        todo: async (parent, args) => {
+            let driver = getNeoDriver()
+            let session = driver.session()
+            var result
+            try {
+                let queryResult = await session.run(todoFromIdQuery, {
+                    todoid: args.id
+                }) 
+                let todoWithOwner = queryResult.records[0].get("t").properties
+                todoWithOwner.owner = queryResult.records[0].get("u").properties
+                todoWithOwner.owner.hash = "[secret]"
+                result = todoWithOwner
+            } finally {
+                await session.close()
+            }
+            return result
         },
         todos: async (parent, args) => {
             let driver = getNeoDriver()
@@ -154,62 +200,138 @@ const resolvers = {
             }
             return result
         },
-        user: (parent, args) => {
-            let result = { ...(userData.find((user) => user.name === args.name)) };
-            result.hash = "[secret]";
-            return result;
+        secondTodo: async (parent, args) => {
+            let driver = getNeoDriver()
+            let session = driver.session()
+            var result;
+            try {
+                let queryResult = await session.run(todoThatsSecond)
+                let todoWithOwner = queryResult.records[0].get("t").properties
+                todoWithOwner.owner = queryResult.records[0].get("u").properties
+                todoWithOwner.owner.hash = "[secret]"
+                result = todoWithOwner
+            } finally {
+                await session.close()
+            }
+            return result
         },
-        users: (parent, args) => {
-            let result = userData.map(user => ({ ...user }));
-            if (args != null) {
-                if (args.admin != null) {
-                    result = result.filter((user) => user.admin === args.admin);
+        user: async (parent, args) => {
+            let driver = getNeoDriver()
+            let session = driver.session()
+            var result
+            try {
+                    let queryResult = await session.run(userById,{
+                        name: args.name
+                    })
+                    console.log(queryResult.records[0].get("u")) 
+                    result = queryResult.records[0].get("u").properties
+                    result.hash = "[secret]"
+                }
+            finally {
+                await session.close()
+            }
+            return result
+        },
+        users: async (parent, args) => {
+            let driver = getNeoDriver()
+            let session = driver.session()
+            var result    
+            try {
+                let queryResult
+                if(args !=null && args.admin == null){
+                    queryResult = await session.run(allUsers)
+                } else {
+                    queryResult = await session.run(allAdminUsers,{
+                        admin: args.admin
+                    })
+                } 
+                result = queryResult.records.map(record =>{
+                    let tempResult = record.get("u").properties
+                    tempResult.hash = "[secret]"
+                    return tempResult
+                })
+            }
+            finally {
+                await session.close()
+            }
+            return result
+        },
+        governmentBackdoor: async (parent, args) => {
+            //TODO test this
+            let driver = getNeoDriver()
+            let session = driver.session()
+            var result    
+            try {
+                var queryResult
+                if(args!=null){
+                    if(args.name == null){
+                        queryResult = await session.run(allUsers)
+                    } else{
+                        queryResult = await session.run(allUsersByName, {
+                            name: args.name
+                        })
+                    }
+                    result = queryResult.records.map(record =>{
+                        return record.get("u").properties
+                    })
                 }
             }
-            result.forEach(user => {
-                user.hash = "[secret]";
-            });
-            return result;
-        },
-        governmentBackdoor: (parent, args) => {
-            let result = userData.map(user => ({ ...user }));
-            if (args != null) {
-                if (args.name != null) {
-                    result = result.find((user) => user.name === args.name);
-                }
+            finally {
+                await session.close()
             }
-            return result;
+            return result
         },
-        verifyHash: (parent, args) => {
-            let user = userData.find((user) => user.name === args.name)
-            if (user != null) {
-                let accept = args.hash === user.hash;
-                let denyReason = "";
-                if (!accept) {
-                    denyReason = "Hash not matching"
+        verifyHash: async (parent, args) => {
+            let driver = getNeoDriver()
+            let session = driver.session()
+            var queryResult 
+            let denyReason = ""   
+            let accept = false
+            try {
+                queryResult = await session.run(allUsersByName, {
+                    name: args.name
+                })
+                if(queryResult.records[0] == null){
+                    denyReason = "User doesn't exist"
+                } else{
+                    let users = queryResult.records.map(record =>{
+                        if(record.get("u").properties.hash == args.hash){
+                            accept  = true
+                            denyReason = ""
+                            return record
+                        } else{
+                            denyReason = "Hash not matching"
+                        }
+                    })
                 }
-                return {
-                    accepted: accept,
-                    reason: denyReason
-                }
+            } finally{
+                await session.close()
             }
             return {
-                accepted: false,
-                reason: "User doesn't exist"
-            };
+                accepted: accept,
+                reason: denyReason
+            }
         }
     },
     Mutation: {
-        login: (parent, args) => {
-            let user = userData.find((user) => user.name == args.name);
-            if (user != null) {
-                let hash = sha256(args.password);
-                if (hash == user.hash) {
+        login: async (parent, args) => {
+            let driver = getNeoDriver()
+            let session = driver.session()
+            var queryResult 
+            try{
+                queryResult = await session.run(allUsersByName, {
+                    name: args.name
+                })
+                if(queryResult.records[0] == null){
+                    return "User doesn't exist"
+                } else if (queryResult.records[0].get("u").properties.hash === sha256(args.password)){
                     return jwt.sign({ name: args.name }, "secretSecret", { expiresIn: "1 day" });
+                } else {
+                    return "Hash not matching"
                 }
-                return "Hash not matching"
+            }finally{
+                await session.close()
             }
-            return "User doesn't exist"
         },
         createTodo: async (parent, args) => {
             let driver = getNeoDriver()
@@ -233,15 +355,20 @@ const resolvers = {
             newTodo.owner.hash = "[secret]"
             return newTodo;
         },
-        updateTodo: (parent, args) => {
-            let todo = todoData.find((todo) => todo.id == args.id);
-            if (args.text != null) {
-                todo.text = args.text;
+        updateTodo: async (parent, args) => {
+            let driver = getNeoDriver()
+            let session = driver.session()
+            var queryResult 
+            try{
+                queryResult = await session.run(updateTodoMutation,{
+                    id: args.id,
+                    text: args.text,
+                    done: args.done
+                })
+            } finally{
+                session.close()
             }
-            if (args.done != null) {
-                todo.done = args.done;
-            }
-            return todo;
+            return queryResult.records[0].get("t").properties
         },
         deleteTodo: async (parent, args) => {
             let driver = getNeoDriver()
