@@ -102,12 +102,12 @@ const defaultTodos = [
     }
 ];
 
-const todoFromIdQuery = "MATCH (t:Todo)-[:OWNED_BY]->(u:User)\n" + 
-    "WHERE t.id = $todoid\n" + 
+const todoFromIdQuery = "MATCH (t:Todo)-[:OWNED_BY]->(u:User)\n" +
+    "WHERE t.id = $todoid\n" +
     "RETURN t, u"
 
 const todoThatsSecond = "MATCH (t:Todo)-[:OWNED_BY]->(u:User)\n" +
-    "RETURN t, u \n" + 
+    "RETURN t, u \n" +
     "ORDER BY t.id ASC\n" +
     "SKIP 1\n" +
     "LIMIT 1"
@@ -123,18 +123,18 @@ const doneTodosQuery = "MATCH (t:Todo)-[:OWNED_BY]->(u:User)\n" +
     "WHERE t.done = $done\n" +
     "RETURN t, u\n"
 
-const userById = "MATCH (u:User)\n" + 
+const userById = "MATCH (u:User)\n" +
     "WHERE u.name = $name\n" +
     "RETURN u"
 
-const allUsers = "MATCH (u:User)\n" + 
+const allUsers = "MATCH (u:User)\n" +
     "RETURN u"
 
-const allAdminUsers = "MATCH (u:User)\n" + 
+const allAdminUsers = "MATCH (u:User)\n" +
     "WHERE u.admin = $admin\n" +
     "RETURN u"
 
-const allUsersByName = "MATCH (u:User)\n" + 
+const allUsersByName = "MATCH (u:User)\n" +
     "WHERE u.name = $name\n" +
     "RETURN u"
 
@@ -145,11 +145,10 @@ const createTodoInnerQuery = "MATCH (u:User), (t:Todo)\n" +
     "CREATE (t)-[r:OWNED_BY]->(u)\n" +
     "RETURN u, type(r), t.id"
 
-const updateTodoMutation = "MATCH (t:Todo)\n" +
-    "WHERE t.id = $id\n" +
-    "SET t.text = $text\n" +
-    "SET t.done = $done\n" + 
-    "RETURN t"
+const updateTodoMutation = "MERGE (t:Todo {id: $id})-[:OWNED_BY]->(u:User) \n" +
+    "ON MATCH SET t.text = case when $text IS NULL then t.text else $text end, t.done = case when $done IS NULL then t.done else $done end \n" +
+    "ON CREATE SET t.id = $id, t.text = $text, t.done = $done\n" +
+    "RETURN t, u"
 
 const deleteTodoMutation = "MATCH (t:Todo)-[:OWNED_BY]->(u:User) \n" +
     "WHERE t.id = $id\n" +
@@ -166,7 +165,7 @@ const resolvers = {
             try {
                 let queryResult = await session.run(todoFromIdQuery, {
                     todoid: args.id
-                }) 
+                })
                 let todoWithOwner = queryResult.records[0].get("t").properties
                 todoWithOwner.owner = queryResult.records[0].get("u").properties
                 todoWithOwner.owner.hash = "[secret]"
@@ -220,13 +219,12 @@ const resolvers = {
             let session = driver.session()
             var result
             try {
-                    let queryResult = await session.run(userById,{
-                        name: args.name
-                    })
-                    console.log(queryResult.records[0].get("u")) 
-                    result = queryResult.records[0].get("u").properties
-                    result.hash = "[secret]"
-                }
+                let queryResult = await session.run(userById, {
+                    name: args.name
+                })
+                result = queryResult.records[0].get("u").properties
+                result.hash = "[secret]"
+            }
             finally {
                 await session.close()
             }
@@ -235,17 +233,17 @@ const resolvers = {
         users: async (parent, args) => {
             let driver = getNeoDriver()
             let session = driver.session()
-            var result    
+            var result
             try {
                 let queryResult
-                if(args !=null && args.admin == null){
+                if (args != null && args.admin == null) {
                     queryResult = await session.run(allUsers)
                 } else {
-                    queryResult = await session.run(allAdminUsers,{
+                    queryResult = await session.run(allAdminUsers, {
                         admin: args.admin
                     })
-                } 
-                result = queryResult.records.map(record =>{
+                }
+                result = queryResult.records.map(record => {
                     let tempResult = record.get("u").properties
                     tempResult.hash = "[secret]"
                     return tempResult
@@ -257,21 +255,20 @@ const resolvers = {
             return result
         },
         governmentBackdoor: async (parent, args) => {
-            //TODO test this
             let driver = getNeoDriver()
             let session = driver.session()
-            var result    
+            var result
             try {
                 var queryResult
-                if(args!=null){
-                    if(args.name == null){
+                if (args != null) {
+                    if (args.name == null) {
                         queryResult = await session.run(allUsers)
-                    } else{
+                    } else {
                         queryResult = await session.run(allUsersByName, {
                             name: args.name
                         })
                     }
-                    result = queryResult.records.map(record =>{
+                    result = queryResult.records.map(record => {
                         return record.get("u").properties
                     })
                 }
@@ -284,27 +281,27 @@ const resolvers = {
         verifyHash: async (parent, args) => {
             let driver = getNeoDriver()
             let session = driver.session()
-            var queryResult 
-            let denyReason = ""   
+            var queryResult
+            let denyReason = ""
             let accept = false
             try {
                 queryResult = await session.run(allUsersByName, {
                     name: args.name
                 })
-                if(queryResult.records[0] == null){
+                if (queryResult.records[0] == null) {
                     denyReason = "User doesn't exist"
-                } else{
-                    let users = queryResult.records.map(record =>{
-                        if(record.get("u").properties.hash == args.hash){
-                            accept  = true
+                } else {
+                    let users = queryResult.records.map(record => {
+                        if (record.get("u").properties.hash == args.hash) {
+                            accept = true
                             denyReason = ""
                             return record
-                        } else{
+                        } else {
                             denyReason = "Hash not matching"
                         }
                     })
                 }
-            } finally{
+            } finally {
                 await session.close()
             }
             return {
@@ -317,19 +314,19 @@ const resolvers = {
         login: async (parent, args) => {
             let driver = getNeoDriver()
             let session = driver.session()
-            var queryResult 
-            try{
+            var queryResult
+            try {
                 queryResult = await session.run(allUsersByName, {
                     name: args.name
                 })
-                if(queryResult.records[0] == null){
+                if (queryResult.records[0] == null) {
                     return "User doesn't exist"
-                } else if (queryResult.records[0].get("u").properties.hash === sha256(args.password)){
+                } else if (queryResult.records[0].get("u").properties.hash === sha256(args.password)) {
                     return jwt.sign({ name: args.name }, "secretSecret", { expiresIn: "1 day" });
                 } else {
                     return "Hash not matching"
                 }
-            }finally{
+            } finally {
                 await session.close()
             }
         },
@@ -358,17 +355,33 @@ const resolvers = {
         updateTodo: async (parent, args) => {
             let driver = getNeoDriver()
             let session = driver.session()
-            var queryResult 
-            try{
-                queryResult = await session.run(updateTodoMutation,{
+            var queryResult
+            try {
+                let targetDone, targetText;
+                if (args.done == undefined) {
+                    targetDone = null
+                } else {
+                    targetDone = args.done
+                }
+                if (args.text == undefined) {
+                    targetText = null
+                } else {
+                    targetText = args.text
+                }
+                queryResult = await session.run(updateTodoMutation, {
                     id: args.id,
-                    text: args.text,
-                    done: args.done
+                    text: targetText,
+                    done: targetDone
                 })
-            } finally{
+            } finally {
                 session.close()
             }
-            return queryResult.records[0].get("t").properties
+            let todo = queryResult.records[0].get("t").properties
+            todo.owner = queryResult.records[0].get("u").properties
+            if (todo.owner != null) {
+                todo.owner.hash = "[secret]"
+            }
+            return todo
         },
         deleteTodo: async (parent, args) => {
             let driver = getNeoDriver()
@@ -405,9 +418,6 @@ async function setDefaultData() {
     await resetNeoDb(driver);
     await createDefaultUsers(driver)
     await createDefaultTodos(driver)
-    //TODO remove the following when done with neo4j
-    todoData = defaultTodos.map(object => ({ ...object }));
-    userData = defaultUsers.map(object => ({ ...object }));
 }
 
 async function resetNeoDb(driver) {
@@ -417,7 +427,6 @@ async function resetNeoDb(driver) {
     } finally {
         session.close()
     }
-    //TODO remove constraints to avoid violating the unique constraint
 }
 
 async function createDefaultUsers(driver) {
@@ -480,7 +489,7 @@ async function asyncForEach(array, callback) {
 }
 
 async function getApolloServer() {
-    //TODO before releasing the app: remove the following line to enable persistance
+    //TODO before releasing the app: remove the following line to enable persistance (it was disabled for debugging purposes)
     await setDefaultData();
     return new ApolloServer({ schema: applyMiddleware(getSchema(), permissions), context: ({ req }) => { req.headers.authorization } });
 }

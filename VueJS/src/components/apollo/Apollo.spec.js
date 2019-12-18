@@ -397,10 +397,10 @@ describe('Queries and Mutations with login', () => {
         const result = expectNoError(await query({
             query: governmentQuery,
         }));
-        expect(result.data.governmentBackdoor).toMatchObject([
-            { hash: "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8" },
-            { hash: "65e84be33532fb784c48129675f9eff3a682b27168c0ea744b2cf58ee02337c5" },
-            { hash: "bcb15f821479b4d5772bd0ca866c00ad5f926e3580720659cc80d39c9d09802a" }
-        ]);
+        expect(result.data.governmentBackdoor).toEqual(expect.arrayContaining([
+            expect.objectContaining({ hash: "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8" }),
+            expect.objectContaining({ hash: "65e84be33532fb784c48129675f9eff3a682b27168c0ea744b2cf58ee02337c5" }),
+            expect.objectContaining({ hash: "bcb15f821479b4d5772bd0ca866c00ad5f926e3580720659cc80d39c9d09802a" })
+        ]))
     });
 });
