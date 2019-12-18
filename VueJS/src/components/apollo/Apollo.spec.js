@@ -8,6 +8,12 @@ const singleTodoQuery = gql`
 			id
             text
             done
+            owner {
+                id
+                name
+                hash
+                admin
+            }
 		}
 	}
 `;
@@ -114,6 +120,12 @@ const updateTodoMutation = gql`
 			id
             text
             done
+            owner {
+                id
+                name
+                hash
+                admin
+            }
         }
     }
 `;
@@ -124,6 +136,12 @@ const deleteTodoMutation = gql`
 			id
             text
             done
+            owner {
+                id
+                name
+                hash
+                admin
+            }
 		}
 	}
 `;
@@ -187,6 +205,11 @@ describe('Queries for Todos', () => {
             text: "Abrechnen",
             done: false
         });
+        expect(result.data.todo.owner).toBeDefined()
+        expect(result.data.todo.owner.id).toBeDefined()
+        expect(result.data.todo.owner.name).toBeDefined()
+        expect(result.data.todo.owner.hash).toEqual("[secret]")
+        expect(result.data.todo.owner.admin).toBeDefined()
     });
 });
 
@@ -303,6 +326,11 @@ describe('Mutations for Todos', () => {
             text: "Bei [Supermarkt] einkaufen",
             done: false
         });
+        expect(result.data.updateTodo.owner).toBeDefined()
+        expect(result.data.updateTodo.owner.id).toBeDefined()
+        expect(result.data.updateTodo.owner.name).toBeDefined()
+        expect(result.data.updateTodo.owner.hash).toEqual("[secret]")
+        expect(result.data.updateTodo.owner.admin).toBeDefined()
     });
 
     it('Mark a Todo as done', async () => {
@@ -316,6 +344,11 @@ describe('Mutations for Todos', () => {
             text: "Abrechnen",
             done: true
         });
+        expect(result.data.updateTodo.owner).toBeDefined()
+        expect(result.data.updateTodo.owner.id).toBeDefined()
+        expect(result.data.updateTodo.owner.name).toBeDefined()
+        expect(result.data.updateTodo.owner.hash).toEqual("[secret]")
+        expect(result.data.updateTodo.owner.admin).toBeDefined()
     });
 
     it('Delete a Todo', async () => {
@@ -328,13 +361,18 @@ describe('Mutations for Todos', () => {
             text: "Hausaufgaben",
             done: true
         });
+        expect(result.data.deleteTodo.owner).toBeDefined()
+        expect(result.data.deleteTodo.owner.id).toBeDefined()
+        expect(result.data.deleteTodo.owner.name).toBeDefined()
+        expect(result.data.deleteTodo.owner.hash).toEqual("[secret]")
+        expect(result.data.deleteTodo.owner.admin).toBeDefined()
 
         const resultAllTodos = expectNoError(await query({
             query: allTodosQuery,
         }));
-        expect(resultAllTodos.data.todos.length).toBe(4);
+        expect(resultAllTodos.data.todos.length).toBe(3);
         expect(resultAllTodos.data.todos).not.toEqual(expect.arrayContaining([expect.objectContaining({
-            id: "40"
+            id: "4"
         })]));
     });
 });

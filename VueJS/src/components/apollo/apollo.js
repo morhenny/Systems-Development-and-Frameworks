@@ -119,6 +119,12 @@ const createTodoInnerQuery = "MATCH (u:User), (t:Todo)\n" +
     "CREATE (t)-[r:OWNED_BY]->(u)\n" +
     "RETURN u, type(r), t.id"
 
+const deleteTodoMutation = "MATCH (t:Todo)-[:OWNED_BY]->(u:User) \n" +
+    "WHERE t.id = $id\n" +
+    "WITH t, u, properties(t) as p\n" +
+    "DETACH DELETE t\n" +
+    "RETURN p, u"
+
 const resolvers = {
     Query: {
         todo: (parent, args) => {
@@ -237,9 +243,21 @@ const resolvers = {
             }
             return todo;
         },
-        deleteTodo: (parent, args) => {
-            var index = todoData.findIndex((todo) => todo.id == args.id);
-            return todoData.splice(index, 1)[0];
+        deleteTodo: async (parent, args) => {
+            let driver = getNeoDriver()
+            let session = driver.session()
+            var relation;
+            try {
+                relation = await session.run(deleteTodoMutation, {
+                    id: args.id
+                })
+                let oldTodo = relation.records[0].get('p')
+                oldTodo.owner = relation.records[0].get('u').properties
+                oldTodo.owner.hash = "[secret]"
+                return oldTodo
+            } finally {
+                await session.close()
+            }
         }
     }
 };
