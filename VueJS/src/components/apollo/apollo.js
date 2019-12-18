@@ -6,9 +6,6 @@ const permissions = require('./permissions.js');
 const { applyMiddleware } = require('graphql-middleware');
 const uuidv1 = require('uuid/v1');
 
-let todoData;
-let userData;
-
 var neo4j = require('neo4j-driver')
 var neoDriver;
 function getNeoDriver() {
@@ -112,10 +109,6 @@ const todoThatsSecond = "MATCH (t:Todo)-[:OWNED_BY]->(u:User)\n" +
     "SKIP 1\n" +
     "LIMIT 1"
 
-const userTodosQuery = "MATCH (t:Todo)-[:OWNED_BY]->(u:User)\n" +
-    "WHERE u.name = $username\n" +
-    "RETURN t, u\n"
-
 const allTodosQuery = "MATCH (t:Todo)-[:OWNED_BY]->(u:User)\n" +
     "RETURN t, u\n"
 
@@ -199,7 +192,7 @@ const resolvers = {
             }
             return result
         },
-        secondTodo: async (parent, args) => {
+        secondTodo: async () => {
             let driver = getNeoDriver()
             let session = driver.session()
             var result;
@@ -291,7 +284,7 @@ const resolvers = {
                 if (queryResult.records[0] == null) {
                     denyReason = "User doesn't exist"
                 } else {
-                    let users = queryResult.records.map(record => {
+                    queryResult.records.map(record => {
                         if (record.get("u").properties.hash == args.hash) {
                             accept = true
                             denyReason = ""

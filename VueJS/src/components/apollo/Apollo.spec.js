@@ -157,9 +157,6 @@ describe('Queries for Todos', () => {
         const testServer = await getMockedApolloServer();
         const testClient = createTestClient(testServer);
         query = testClient.query;
-        const currentTodos = expectNoError(await query({
-            query: allTodosQuery,
-        }));
     });
 
     it('Query all Todos', async () => {
@@ -177,9 +174,6 @@ describe('Queries for Todos', () => {
     });
 
     it('Query done Todos', async () => {
-        const currentTodos = expectNoError(await query({
-            query: allTodosQuery,
-        }));
         const result = expectNoError(await query({
             query: doneTodosQuery,
             variables: { done: true },
