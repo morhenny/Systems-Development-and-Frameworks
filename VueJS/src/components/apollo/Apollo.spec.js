@@ -17,7 +17,13 @@ const allTodosQuery = gql`
 		todos {
 			id
 			text
-			done
+            done
+            owner {
+                id
+                name
+                hash
+                admin
+            }
 		}
 	}
 `;
@@ -27,7 +33,13 @@ const doneTodosQuery = gql`
 		todos(done: $done) {
 			id
 			text
-			done
+            done
+            owner {
+                id
+                name
+                hash
+                admin
+            }
 		}
 	}
 `;
@@ -81,11 +93,17 @@ const loginMutation = gql`
 `;
 
 const createTodoMutation = gql`
-	mutation createTodoMutation($text: String) {
-		createTodo(text: $text) {
+	mutation createTodoMutation($creator: ID!, $text: String) {
+		createTodo(creator: $creator, text: $text) {
             id
             text
             done
+            owner {
+			    id
+                name
+                hash
+                admin
+            }
 		}
 	}
 `;
@@ -118,9 +136,12 @@ function expectNoError(result) {
 describe('Queries for Todos', () => {
     let query;
     beforeEach(async () => {
-        const testServer = getMockedApolloServer();
+        const testServer = await getMockedApolloServer();
         const testClient = createTestClient(testServer);
         query = testClient.query;
+        const currentTodos = expectNoError(await query({
+            query: allTodosQuery,
+        }));
     });
 
     it('Query all Todos', async () => {
@@ -128,15 +149,32 @@ describe('Queries for Todos', () => {
             query: allTodosQuery,
         }));
         expect(result.data.todos.length).toBe(4);
+        result.data.todos.forEach(todo => {
+            expect(todo.owner).toBeDefined()
+            expect(todo.owner.id).toBeDefined()
+            expect(todo.owner.name).toBeDefined()
+            expect(todo.owner.hash).toEqual("[secret]")
+            expect(todo.owner.admin).toBeDefined()
+        });
     });
 
     it('Query done Todos', async () => {
+        const currentTodos = expectNoError(await query({
+            query: allTodosQuery,
+        }));
         const result = expectNoError(await query({
             query: doneTodosQuery,
             variables: { done: true },
         }));
         expect(result.data.todos).toMatchObject([{ done: true }]);
         expect(result.data.todos.length).toBeGreaterThan(0);
+        result.data.todos.forEach(todo => {
+            expect(todo.owner).toBeDefined()
+            expect(todo.owner.id).toBeDefined()
+            expect(todo.owner.name).toBeDefined()
+            expect(todo.owner.hash).toEqual("[secret]")
+            expect(todo.owner.admin).toBeDefined()
+        });
     });
 
     it('Query single Todo by id', async () => {
@@ -155,7 +193,7 @@ describe('Queries for Todos', () => {
 describe('Queries for Users', () => {
     let query;
     beforeEach(async () => {
-        const testServer = getMockedApolloServer();
+        const testServer = await getMockedApolloServer();
         const testClient = createTestClient(testServer);
         query = testClient.query;
     });
@@ -229,7 +267,7 @@ describe('Mutations for Todos', () => {
     let mutate;
 
     beforeEach(async () => {
-        const testServer = getMockedApolloServer();
+        const testServer = await getMockedApolloServer();
         const testClient = createTestClient(testServer);
         query = testClient.query;
         mutate = testClient.mutate;
@@ -238,13 +276,20 @@ describe('Mutations for Todos', () => {
     it('Create a Todo', async () => {
         const result = expectNoError(await mutate({
             mutation: createTodoMutation,
-            variables: { text: "Duschen" }
+            variables: {
+                text: "Duschen",
+                creator: "2"
+            }
         }));
         expect(result.data.createTodo).toMatchObject({
-            id: "5",
             text: "Duschen",
             done: false
         });
+        expect(result.data.createTodo.owner).toBeDefined()
+        expect(result.data.createTodo.owner.id).toBeDefined()
+        expect(result.data.createTodo.owner.name).toBeDefined()
+        expect(result.data.createTodo.owner.hash).toEqual("[secret]")
+        expect(result.data.createTodo.owner.admin).toBeDefined()
     });
 
     it('Update a Todo text', async () => {
@@ -288,19 +333,16 @@ describe('Mutations for Todos', () => {
             query: allTodosQuery,
         }));
         expect(resultAllTodos.data.todos.length).toBe(4);
-        expect(resultAllTodos.data.todos).toMatchObject([
-            { id: "1" },
-            { id: "2" },
-            { id: "3" },
-            { id: "5" }
-        ]);
+        expect(resultAllTodos.data.todos).not.toEqual(expect.arrayContaining([expect.objectContaining({
+            id: "40"
+        })]));
     });
 });
 
 describe('Queries and Mutations with login', () => {
     let query;
     beforeEach(async () => {
-        const loginServer = getMockedApolloServer();
+        const loginServer = await getMockedApolloServer();
         const loginClient = createTestClient(loginServer);
         const loginResult = expectNoError(await loginClient.mutate({
             mutation: loginMutation,
@@ -308,7 +350,7 @@ describe('Queries and Mutations with login', () => {
         }));
         expect(loginResult.data.login).not.toBe("Hash not matching");
         expect(loginResult.data.login).not.toBe("User doesn't exist");
-        const testServer = getMockedApolloServer(() => { return { token: loginResult.data.login } });
+        const testServer = await getMockedApolloServer(() => { return { token: loginResult.data.login } });
         const testClient = createTestClient(testServer);
         query = testClient.query;
     });

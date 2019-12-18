@@ -108,6 +108,10 @@ const userTodosQuery = "MATCH (t:Todo)-[:OWNED_BY]->(u:User)\n" +
 const allTodosQuery = "MATCH (t:Todo)-[:OWNED_BY]->(u:User)\n" +
     "RETURN t, u\n"
 
+const doneTodosQuery = "MATCH (t:Todo)-[:OWNED_BY]->(u:User)\n" +
+    "WHERE t.done = $done\n" +
+    "RETURN t, u\n"
+
 const createTodoMutation = "CREATE (t:Todo {id: $id, text: $text, done: false})"
 
 const createTodoInnerQuery = "MATCH (u:User), (t:Todo)\n" +
@@ -125,7 +129,14 @@ const resolvers = {
             let session = driver.session()
             var result;
             try {
-                let queryResult = await session.run(allTodosQuery)
+                let queryResult;
+                if (args != null && args.done != null) {
+                    queryResult = await session.run(doneTodosQuery, {
+                        done: args.done
+                    })
+                } else {
+                    queryResult = await session.run(allTodosQuery)
+                }
                 result = queryResult.records.map(record => {
                     let todoWithOwner = record.get("t").properties
                     todoWithOwner.owner = record.get("u").properties
@@ -203,24 +214,17 @@ const resolvers = {
                 text: args.text,
                 done: false
             }
-            console.log(args.creator)
-            console.log(newTodo.id)
-            console.log(typeof args.creator)
             try {
                 await session.run(createTodoMutation, newTodo)
-                console.log("Create Todo")
                 relation = await session.run(createTodoInnerQuery, {
                     userid: args.creator,
                     todoid: newTodo.id
                 })
             } finally {
-                console.log("Session closing")
                 await session.close()
-                console.log("Session closed")
             }
-            console.log(relation)
-            console.log("Create Todo3")
             newTodo.owner = relation.records[0].get('u').properties;
+            newTodo.owner.hash = "[secret]"
             return newTodo;
         },
         updateTodo: (parent, args) => {
@@ -251,30 +255,24 @@ function getNextId() {
     return uuidv1();
 }
 
-function setDefaultData() {
+async function setDefaultData() {
     let driver = getNeoDriver();
-    (async () => {
-        resetNeoDb(driver);
-        await createDefaultUsers(driver)
-        await createDefaultTodos(driver)
-    })()
+    await resetNeoDb(driver);
+    await createDefaultUsers(driver)
+    await createDefaultTodos(driver)
     //TODO remove the following when done with neo4j
-    todoData = defaultTodos;
-    userData = defaultUsers;
+    todoData = defaultTodos.map(object => ({ ...object }));
+    userData = defaultUsers.map(object => ({ ...object }));
 }
 
-function resetNeoDb(driver) {
+async function resetNeoDb(driver) {
     let session = driver.session()
     try {
-        session.run("MATCH (n) DETACH DELETE n;", null).then(() => {
-            session.close()
-        }).catch(error => {
-            console.log("ERR: " + error)
-        })
-        //TODO remove constraints to avoid violating the unique constraint
+        await session.run("MATCH (n) DETACH DELETE n;")
     } finally {
-
+        session.close()
     }
+    //TODO remove constraints to avoid violating the unique constraint
 }
 
 async function createDefaultUsers(driver) {
@@ -297,38 +295,33 @@ async function createDefaultTodos(driver) {
     let session = driver.session()
     try {
         await asyncForEach(defaultTodos, async todo => {
-            await session.run("CREATE (t:Todo {id: $id, text: $text, done: $done})",
-                {
-                    id: todo.id,
-                    text: todo.text,
-                    done: todo.done
-                })
+            await session.run("CREATE (t:Todo {id: $id, text: $text, done: $done})", todo)
         })
 
         const matchString = 'MATCH (u:User), (t:Todo) \n' +
-            'WHERE u.id = $userid AND t.id = $todo_id \n' +
+            'WHERE u.id = $userid AND t.id = $todoid \n' +
             'CREATE (t)-[r:OWNED_BY]->(u)';
 
         await session.run(matchString,
             {
                 userid: defaultUsers[0].id,
-                todo_id: defaultTodos[0].id
+                todoid: defaultTodos[0].id
             })
         await session.run(matchString,
             {
                 userid: defaultUsers[1].id,
-                todo_id: defaultTodos[1].id
+                todoid: defaultTodos[1].id
             })
         await session.run(matchString,
             {
                 userid: defaultUsers[2].id,
-                todo_id: defaultTodos[2].id
+                todoid: defaultTodos[2].id
             })
 
         await session.run(matchString,
             {
                 userid: defaultUsers[1].id,
-                todo_id: defaultTodos[3].id
+                todoid: defaultTodos[3].id
             })
     } finally {
         await session.close()
@@ -337,19 +330,18 @@ async function createDefaultTodos(driver) {
 
 async function asyncForEach(array, callback) {
     for (let index = 0; index < array.length; index++) {
-        console.log("Debug: " + index + ", " + array.length)
         await callback(array[index]);
     }
 }
 
-function getApolloServer() {
+async function getApolloServer() {
     //TODO before releasing the app: remove the following line to enable persistance
-    setDefaultData();
+    await setDefaultData();
     return new ApolloServer({ schema: applyMiddleware(getSchema(), permissions), context: ({ req }) => { req.headers.authorization } });
 }
 
-function getMockedApolloServer(context) {
-    setDefaultData();
+async function getMockedApolloServer(context) {
+    await setDefaultData();
     return new ApolloServer({ schema: applyMiddleware(getSchema(), permissions), context: context });
 }
 
