@@ -8,6 +8,12 @@ const singleTodoQuery = gql`
 			id
             text
             done
+            owner {
+                id
+                name
+                hash
+                admin
+            }
 		}
 	}
 `;
@@ -17,7 +23,13 @@ const allTodosQuery = gql`
 		todos {
 			id
 			text
-			done
+            done
+            owner {
+                id
+                name
+                hash
+                admin
+            }
 		}
 	}
 `;
@@ -27,7 +39,13 @@ const doneTodosQuery = gql`
 		todos(done: $done) {
 			id
 			text
-			done
+            done
+            owner {
+                id
+                name
+                hash
+                admin
+            }
 		}
 	}
 `;
@@ -81,11 +99,17 @@ const loginMutation = gql`
 `;
 
 const createTodoMutation = gql`
-	mutation createTodoMutation($text: String) {
-		createTodo(text: $text) {
+	mutation createTodoMutation($creator: ID!, $text: String) {
+		createTodo(creator: $creator, text: $text) {
             id
             text
             done
+            owner {
+			    id
+                name
+                hash
+                admin
+            }
 		}
 	}
 `;
@@ -96,6 +120,12 @@ const updateTodoMutation = gql`
 			id
             text
             done
+            owner {
+                id
+                name
+                hash
+                admin
+            }
         }
     }
 `;
@@ -106,6 +136,12 @@ const deleteTodoMutation = gql`
 			id
             text
             done
+            owner {
+                id
+                name
+                hash
+                admin
+            }
 		}
 	}
 `;
@@ -118,7 +154,7 @@ function expectNoError(result) {
 describe('Queries for Todos', () => {
     let query;
     beforeEach(async () => {
-        const testServer = getMockedApolloServer();
+        const testServer = await getMockedApolloServer();
         const testClient = createTestClient(testServer);
         query = testClient.query;
     });
@@ -128,6 +164,13 @@ describe('Queries for Todos', () => {
             query: allTodosQuery,
         }));
         expect(result.data.todos.length).toBe(4);
+        result.data.todos.forEach(todo => {
+            expect(todo.owner).toBeDefined()
+            expect(todo.owner.id).toBeDefined()
+            expect(todo.owner.name).toBeDefined()
+            expect(todo.owner.hash).toEqual("[secret]")
+            expect(todo.owner.admin).toBeDefined()
+        });
     });
 
     it('Query done Todos', async () => {
@@ -137,6 +180,13 @@ describe('Queries for Todos', () => {
         }));
         expect(result.data.todos).toMatchObject([{ done: true }]);
         expect(result.data.todos.length).toBeGreaterThan(0);
+        result.data.todos.forEach(todo => {
+            expect(todo.owner).toBeDefined()
+            expect(todo.owner.id).toBeDefined()
+            expect(todo.owner.name).toBeDefined()
+            expect(todo.owner.hash).toEqual("[secret]")
+            expect(todo.owner.admin).toBeDefined()
+        });
     });
 
     it('Query single Todo by id', async () => {
@@ -149,13 +199,18 @@ describe('Queries for Todos', () => {
             text: "Abrechnen",
             done: false
         });
+        expect(result.data.todo.owner).toBeDefined()
+        expect(result.data.todo.owner.id).toBeDefined()
+        expect(result.data.todo.owner.name).toBeDefined()
+        expect(result.data.todo.owner.hash).toEqual("[secret]")
+        expect(result.data.todo.owner.admin).toBeDefined()
     });
 });
 
 describe('Queries for Users', () => {
     let query;
     beforeEach(async () => {
-        const testServer = getMockedApolloServer();
+        const testServer = await getMockedApolloServer();
         const testClient = createTestClient(testServer);
         query = testClient.query;
     });
@@ -229,7 +284,7 @@ describe('Mutations for Todos', () => {
     let mutate;
 
     beforeEach(async () => {
-        const testServer = getMockedApolloServer();
+        const testServer = await getMockedApolloServer();
         const testClient = createTestClient(testServer);
         query = testClient.query;
         mutate = testClient.mutate;
@@ -238,13 +293,20 @@ describe('Mutations for Todos', () => {
     it('Create a Todo', async () => {
         const result = expectNoError(await mutate({
             mutation: createTodoMutation,
-            variables: { text: "Duschen" }
+            variables: {
+                text: "Duschen",
+                creator: "2"
+            }
         }));
         expect(result.data.createTodo).toMatchObject({
-            id: "5",
             text: "Duschen",
             done: false
         });
+        expect(result.data.createTodo.owner).toBeDefined()
+        expect(result.data.createTodo.owner.id).toBeDefined()
+        expect(result.data.createTodo.owner.name).toBeDefined()
+        expect(result.data.createTodo.owner.hash).toEqual("[secret]")
+        expect(result.data.createTodo.owner.admin).toBeDefined()
     });
 
     it('Update a Todo text', async () => {
@@ -258,6 +320,11 @@ describe('Mutations for Todos', () => {
             text: "Bei [Supermarkt] einkaufen",
             done: false
         });
+        expect(result.data.updateTodo.owner).toBeDefined()
+        expect(result.data.updateTodo.owner.id).toBeDefined()
+        expect(result.data.updateTodo.owner.name).toBeDefined()
+        expect(result.data.updateTodo.owner.hash).toEqual("[secret]")
+        expect(result.data.updateTodo.owner.admin).toBeDefined()
     });
 
     it('Mark a Todo as done', async () => {
@@ -271,6 +338,11 @@ describe('Mutations for Todos', () => {
             text: "Abrechnen",
             done: true
         });
+        expect(result.data.updateTodo.owner).toBeDefined()
+        expect(result.data.updateTodo.owner.id).toBeDefined()
+        expect(result.data.updateTodo.owner.name).toBeDefined()
+        expect(result.data.updateTodo.owner.hash).toEqual("[secret]")
+        expect(result.data.updateTodo.owner.admin).toBeDefined()
     });
 
     it('Delete a Todo', async () => {
@@ -283,24 +355,26 @@ describe('Mutations for Todos', () => {
             text: "Hausaufgaben",
             done: true
         });
+        expect(result.data.deleteTodo.owner).toBeDefined()
+        expect(result.data.deleteTodo.owner.id).toBeDefined()
+        expect(result.data.deleteTodo.owner.name).toBeDefined()
+        expect(result.data.deleteTodo.owner.hash).toEqual("[secret]")
+        expect(result.data.deleteTodo.owner.admin).toBeDefined()
 
         const resultAllTodos = expectNoError(await query({
             query: allTodosQuery,
         }));
-        expect(resultAllTodos.data.todos.length).toBe(4);
-        expect(resultAllTodos.data.todos).toMatchObject([
-            { id: "1" },
-            { id: "2" },
-            { id: "3" },
-            { id: "5" }
-        ]);
+        expect(resultAllTodos.data.todos.length).toBe(3);
+        expect(resultAllTodos.data.todos).not.toEqual(expect.arrayContaining([expect.objectContaining({
+            id: "4"
+        })]));
     });
 });
 
 describe('Queries and Mutations with login', () => {
     let query;
     beforeEach(async () => {
-        const loginServer = getMockedApolloServer();
+        const loginServer = await getMockedApolloServer();
         const loginClient = createTestClient(loginServer);
         const loginResult = expectNoError(await loginClient.mutate({
             mutation: loginMutation,
@@ -308,7 +382,7 @@ describe('Queries and Mutations with login', () => {
         }));
         expect(loginResult.data.login).not.toBe("Hash not matching");
         expect(loginResult.data.login).not.toBe("User doesn't exist");
-        const testServer = getMockedApolloServer(() => { return { token: loginResult.data.login } });
+        const testServer = await getMockedApolloServer(() => { return { token: loginResult.data.login } });
         const testClient = createTestClient(testServer);
         query = testClient.query;
     });
@@ -317,10 +391,10 @@ describe('Queries and Mutations with login', () => {
         const result = expectNoError(await query({
             query: governmentQuery,
         }));
-        expect(result.data.governmentBackdoor).toMatchObject([
-            { hash: "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8" },
-            { hash: "65e84be33532fb784c48129675f9eff3a682b27168c0ea744b2cf58ee02337c5" },
-            { hash: "bcb15f821479b4d5772bd0ca866c00ad5f926e3580720659cc80d39c9d09802a" }
-        ]);
+        expect(result.data.governmentBackdoor).toEqual(expect.arrayContaining([
+            expect.objectContaining({ hash: "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8" }),
+            expect.objectContaining({ hash: "65e84be33532fb784c48129675f9eff3a682b27168c0ea744b2cf58ee02337c5" }),
+            expect.objectContaining({ hash: "bcb15f821479b4d5772bd0ca866c00ad5f926e3580720659cc80d39c9d09802a" })
+        ]))
     });
 });

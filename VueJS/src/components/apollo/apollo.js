@@ -4,15 +4,25 @@ const sha256 = require('js-sha256');
 const jwt = require('jsonwebtoken');
 const permissions = require('./permissions.js');
 const { applyMiddleware } = require('graphql-middleware');
+const uuidv1 = require('uuid/v1');
 
-let todoData;
-let userData;
+var neo4j = require('neo4j-driver')
+var neoDriver;
+function getNeoDriver() {
+    if (neoDriver == null) {
+        neoDriver = neo4j.driver(
+            'bolt://localhost:7687',
+            neo4j.auth.basic('neo4j', 'passwd'))
+    }
+    return neoDriver
+}
 
 const typeDefs = gql`
   type Todo {
       id: ID!
       text: String
       done: Boolean
+      owner: User
   }
   type User {
       id: ID!
@@ -26,13 +36,14 @@ const typeDefs = gql`
   }
   type Mutation {
       login(name: String!, password: String!): String
-      createTodo(text: String): Todo
+      createTodo(creator: ID!, text: String): Todo
       updateTodo(id: ID!, text: String, done: Boolean): Todo
       deleteTodo(id: ID!): Todo
   }
   type Query {
     todo(id: ID!): Todo
     todos(text: String, done: Boolean): [Todo]
+    secondTodo: Todo
     user(name: String!): User
     users(admin: Boolean): [User]
     governmentBackdoor(name: String): [User]
@@ -40,145 +51,346 @@ const typeDefs = gql`
   }
 `;
 
-const defaultTodos = [
-    {
-        id: 1,
-        text: "Abrechnen",
-        done: false
-    },
-    {
-        id: 2,
-        text: "Einkaufen",
-        done: false
-    },
-    {
-        id: 3,
-        text: "Packen",
-        done: false
-    },
-    {
-        id: 4,
-        text: "Hausaufgaben",
-        done: true
-    }
-];
-
 const defaultUsers = [
     {
-        id: 1,
+        id: "1",
         name: "sysadmin",
         hash: "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8",       //password
         admin: true
     },
     {
-        id: 2,
+        id: "2",
         name: "todoBot",
         hash: "65e84be33532fb784c48129675f9eff3a682b27168c0ea744b2cf58ee02337c5",       //qwerty
         admin: false
     },
     {
-        id: 3,
+        id: "3",
         name: "user3",
         hash: "bcb15f821479b4d5772bd0ca866c00ad5f926e3580720659cc80d39c9d09802a",       //111111
         admin: false
     }
 ];
 
+const defaultTodos = [
+    {
+        id: "1",
+        text: "Abrechnen",
+        done: false,
+        owner: defaultUsers[0]
+    },
+    {
+        id: "2",
+        text: "Einkaufen",
+        done: false,
+        owner: defaultUsers[1]
+    },
+    {
+        id: "3",
+        text: "Packen",
+        done: false,
+        owner: defaultUsers[2]
+    },
+    {
+        id: "4",
+        text: "Hausaufgaben",
+        done: true,
+        owner: defaultUsers[0]
+    }
+];
+
+const todoFromIdQuery = "MATCH (t:Todo)-[:OWNED_BY]->(u:User)\n" +
+    "WHERE t.id = $todoid\n" +
+    "RETURN t, u"
+
+const todoThatsSecond = "MATCH (t:Todo)-[:OWNED_BY]->(u:User)\n" +
+    "RETURN t, u \n" +
+    "ORDER BY t.id ASC\n" +
+    "SKIP 1\n" +
+    "LIMIT 1"
+
+const allTodosQuery = "MATCH (t:Todo)-[:OWNED_BY]->(u:User)\n" +
+    "RETURN t, u\n"
+
+const doneTodosQuery = "MATCH (t:Todo)-[:OWNED_BY]->(u:User)\n" +
+    "WHERE t.done = $done\n" +
+    "RETURN t, u\n"
+
+const userById = "MATCH (u:User)\n" +
+    "WHERE u.name = $name\n" +
+    "RETURN u"
+
+const allUsers = "MATCH (u:User)\n" +
+    "RETURN u"
+
+const allAdminUsers = "MATCH (u:User)\n" +
+    "WHERE u.admin = $admin\n" +
+    "RETURN u"
+
+const allUsersByName = "MATCH (u:User)\n" +
+    "WHERE u.name = $name\n" +
+    "RETURN u"
+
+const createTodoMutation = "CREATE (t:Todo {id: $id, text: $text, done: false})"
+
+const createTodoInnerQuery = "MATCH (u:User), (t:Todo)\n" +
+    "WHERE u.id = $userid AND t.id = $todoid\n" +
+    "CREATE (t)-[r:OWNED_BY]->(u)\n" +
+    "RETURN u, type(r), t.id"
+
+const updateTodoMutation = "MERGE (t:Todo {id: $id})-[:OWNED_BY]->(u:User) \n" +
+    "ON MATCH SET t.text = case when $text IS NULL then t.text else $text end, t.done = case when $done IS NULL then t.done else $done end \n" +
+    "ON CREATE SET t.id = $id, t.text = $text, t.done = $done\n" +
+    "RETURN t, u"
+
+const deleteTodoMutation = "MATCH (t:Todo)-[:OWNED_BY]->(u:User) \n" +
+    "WHERE t.id = $id\n" +
+    "WITH t, u, properties(t) as p\n" +
+    "DETACH DELETE t\n" +
+    "RETURN p, u"
+
 const resolvers = {
     Query: {
-        todo: (parent, args) => {
-            return todoData.find((todo) => todo.id == args.id);
+        todo: async (parent, args) => {
+            let driver = getNeoDriver()
+            let session = driver.session()
+            var result
+            try {
+                let queryResult = await session.run(todoFromIdQuery, {
+                    todoid: args.id
+                })
+                let todoWithOwner = queryResult.records[0].get("t").properties
+                todoWithOwner.owner = queryResult.records[0].get("u").properties
+                todoWithOwner.owner.hash = "[secret]"
+                result = todoWithOwner
+            } finally {
+                await session.close()
+            }
+            return result
         },
-        todos: (parent, args) => {
-            let result = todoData.map(todo => ({ ...todo }));
-            if (args != null) {
-                if (args.text != null) {
-                    result = result.filter((todo) => todo.text === args.text);
+        todos: async (parent, args) => {
+            let driver = getNeoDriver()
+            let session = driver.session()
+            var result;
+            try {
+                let queryResult;
+                if (args != null && args.done != null) {
+                    queryResult = await session.run(doneTodosQuery, {
+                        done: args.done
+                    })
+                } else {
+                    queryResult = await session.run(allTodosQuery)
                 }
-                if (args.done != null) {
-                    result = result.filter((todo) => todo.done === args.done);
+                result = queryResult.records.map(record => {
+                    let todoWithOwner = record.get("t").properties
+                    todoWithOwner.owner = record.get("u").properties
+                    todoWithOwner.owner.hash = "[secret]"
+                    return todoWithOwner
+                })
+            } finally {
+                await session.close()
+            }
+            return result
+        },
+        secondTodo: async () => {
+            let driver = getNeoDriver()
+            let session = driver.session()
+            var result;
+            try {
+                let queryResult = await session.run(todoThatsSecond)
+                let todoWithOwner = queryResult.records[0].get("t").properties
+                todoWithOwner.owner = queryResult.records[0].get("u").properties
+                todoWithOwner.owner.hash = "[secret]"
+                result = todoWithOwner
+            } finally {
+                await session.close()
+            }
+            return result
+        },
+        user: async (parent, args) => {
+            let driver = getNeoDriver()
+            let session = driver.session()
+            var result
+            try {
+                let queryResult = await session.run(userById, {
+                    name: args.name
+                })
+                result = queryResult.records[0].get("u").properties
+                result.hash = "[secret]"
+            }
+            finally {
+                await session.close()
+            }
+            return result
+        },
+        users: async (parent, args) => {
+            let driver = getNeoDriver()
+            let session = driver.session()
+            var result
+            try {
+                let queryResult
+                if (args != null && args.admin == null) {
+                    queryResult = await session.run(allUsers)
+                } else {
+                    queryResult = await session.run(allAdminUsers, {
+                        admin: args.admin
+                    })
+                }
+                result = queryResult.records.map(record => {
+                    let tempResult = record.get("u").properties
+                    tempResult.hash = "[secret]"
+                    return tempResult
+                })
+            }
+            finally {
+                await session.close()
+            }
+            return result
+        },
+        governmentBackdoor: async (parent, args) => {
+            let driver = getNeoDriver()
+            let session = driver.session()
+            var result
+            try {
+                var queryResult
+                if (args != null) {
+                    if (args.name == null) {
+                        queryResult = await session.run(allUsers)
+                    } else {
+                        queryResult = await session.run(allUsersByName, {
+                            name: args.name
+                        })
+                    }
+                    result = queryResult.records.map(record => {
+                        return record.get("u").properties
+                    })
                 }
             }
-            return result;
-        },
-        user: (parent, args) => {
-            let result = { ...(userData.find((user) => user.name === args.name)) };
-            result.hash = "[secret]";
-            return result;
-        },
-        users: (parent, args) => {
-            let result = userData.map(user => ({ ...user }));
-            if (args != null) {
-                if (args.admin != null) {
-                    result = result.filter((user) => user.admin === args.admin);
-                }
+            finally {
+                await session.close()
             }
-            result.forEach(user => {
-                user.hash = "[secret]";
-            });
-            return result;
+            return result
         },
-        governmentBackdoor: (parent, args) => {
-            let result = userData.map(user => ({ ...user }));
-            if (args != null) {
-                if (args.name != null) {
-                    result = result.find((user) => user.name === args.name);
+        verifyHash: async (parent, args) => {
+            let driver = getNeoDriver()
+            let session = driver.session()
+            var queryResult
+            let denyReason = ""
+            let accept = false
+            try {
+                queryResult = await session.run(allUsersByName, {
+                    name: args.name
+                })
+                if (queryResult.records[0] == null) {
+                    denyReason = "User doesn't exist"
+                } else {
+                    queryResult.records.map(record => {
+                        if (record.get("u").properties.hash == args.hash) {
+                            accept = true
+                            denyReason = ""
+                            return record
+                        } else {
+                            denyReason = "Hash not matching"
+                        }
+                    })
                 }
-            }
-            return result;
-        },
-        verifyHash: (parent, args) => {
-            let user = userData.find((user) => user.name === args.name)
-            if (user != null) {
-                let accept = args.hash === user.hash;
-                let denyReason = "";
-                if (!accept) {
-                    denyReason = "Hash not matching"
-                }
-                return {
-                    accepted: accept,
-                    reason: denyReason
-                }
+            } finally {
+                await session.close()
             }
             return {
-                accepted: false,
-                reason: "User doesn't exist"
-            };
+                accepted: accept,
+                reason: denyReason
+            }
         }
     },
     Mutation: {
-        login: (parent, args) => {
-            let user = userData.find((user) => user.name == args.name);
-            if (user != null) {
-                let hash = sha256(args.password);
-                if (hash == user.hash) {
+        login: async (parent, args) => {
+            let driver = getNeoDriver()
+            let session = driver.session()
+            var queryResult
+            try {
+                queryResult = await session.run(allUsersByName, {
+                    name: args.name
+                })
+                if (queryResult.records[0] == null) {
+                    return "User doesn't exist"
+                } else if (queryResult.records[0].get("u").properties.hash === sha256(args.password)) {
                     return jwt.sign({ name: args.name }, "secretSecret", { expiresIn: "1 day" });
+                } else {
+                    return "Hash not matching"
                 }
-                return "Hash not matching"
+            } finally {
+                await session.close()
             }
-            return "User doesn't exist"
         },
-        createTodo: (parent, args) => {
-            todoData.push({
+        createTodo: async (parent, args) => {
+            let driver = getNeoDriver()
+            let session = driver.session()
+            var relation;
+            let newTodo = {
                 id: getNextId(),
                 text: args.text,
                 done: false
-            });
-            return todoData[todoData.length - 1];
-        },
-        updateTodo: (parent, args) => {
-            let todo = todoData.find((todo) => todo.id == args.id);
-            if (args.text != null) {
-                todo.text = args.text;
             }
-            if (args.done != null) {
-                todo.done = args.done;
+            try {
+                await session.run(createTodoMutation, newTodo)
+                relation = await session.run(createTodoInnerQuery, {
+                    userid: args.creator,
+                    todoid: newTodo.id
+                })
+            } finally {
+                await session.close()
             }
-            return todo;
+            newTodo.owner = relation.records[0].get('u').properties;
+            newTodo.owner.hash = "[secret]"
+            return newTodo;
         },
-        deleteTodo: (parent, args) => {
-            var index = todoData.findIndex((todo) => todo.id == args.id);
-            return todoData.splice(index, 1)[0];
+        updateTodo: async (parent, args) => {
+            let driver = getNeoDriver()
+            let session = driver.session()
+            var queryResult
+            try {
+                let targetDone, targetText;
+                if (args.done == undefined) {
+                    targetDone = null
+                } else {
+                    targetDone = args.done
+                }
+                if (args.text == undefined) {
+                    targetText = null
+                } else {
+                    targetText = args.text
+                }
+                queryResult = await session.run(updateTodoMutation, {
+                    id: args.id,
+                    text: targetText,
+                    done: targetDone
+                })
+            } finally {
+                session.close()
+            }
+            let todo = queryResult.records[0].get("t").properties
+            todo.owner = queryResult.records[0].get("u").properties
+            if (todo.owner != null) {
+                todo.owner.hash = "[secret]"
+            }
+            return todo
+        },
+        deleteTodo: async (parent, args) => {
+            let driver = getNeoDriver()
+            let session = driver.session()
+            var relation;
+            try {
+                relation = await session.run(deleteTodoMutation, {
+                    id: args.id
+                })
+                let oldTodo = relation.records[0].get('p')
+                oldTodo.owner = relation.records[0].get('u').properties
+                oldTodo.owner.hash = "[secret]"
+                return oldTodo
+            } finally {
+                await session.close()
+            }
         }
     }
 };
@@ -191,27 +403,92 @@ function getSchema() {
 }
 
 function getNextId() {
-    let newId = 0;
-    var todo;
-    do {
-        newId++;
-        todo = todoData.find((todo) => todo.id == newId);
-    } while (todo != null)
-    return newId;
+    return uuidv1();
 }
 
-function setDefaultData() {
-    todoData = defaultTodos;
-    userData = defaultUsers;
+async function setDefaultData() {
+    let driver = getNeoDriver();
+    await resetNeoDb(driver);
+    await createDefaultUsers(driver)
+    await createDefaultTodos(driver)
 }
 
-function getApolloServer() {
-    setDefaultData();
+async function resetNeoDb(driver) {
+    let session = driver.session()
+    try {
+        await session.run("MATCH (n) DETACH DELETE n;")
+    } finally {
+        session.close()
+    }
+}
+
+async function createDefaultUsers(driver) {
+    let session = driver.session()
+    try {
+        await asyncForEach(defaultUsers, async user => {
+            await session.run("CREATE (u:User {id: $id, name: $name, hash: $hash, admin: $admin})", {
+                id: user.id,
+                name: user.name,
+                hash: user.hash,
+                admin: user.admin
+            })
+        })
+    } finally {
+        await session.close()
+    }
+}
+
+async function createDefaultTodos(driver) {
+    let session = driver.session()
+    try {
+        await asyncForEach(defaultTodos, async todo => {
+            await session.run("CREATE (t:Todo {id: $id, text: $text, done: $done})", todo)
+        })
+
+        const matchString = 'MATCH (u:User), (t:Todo) \n' +
+            'WHERE u.id = $userid AND t.id = $todoid \n' +
+            'CREATE (t)-[r:OWNED_BY]->(u)';
+
+        await session.run(matchString,
+            {
+                userid: defaultUsers[0].id,
+                todoid: defaultTodos[0].id
+            })
+        await session.run(matchString,
+            {
+                userid: defaultUsers[1].id,
+                todoid: defaultTodos[1].id
+            })
+        await session.run(matchString,
+            {
+                userid: defaultUsers[2].id,
+                todoid: defaultTodos[2].id
+            })
+
+        await session.run(matchString,
+            {
+                userid: defaultUsers[1].id,
+                todoid: defaultTodos[3].id
+            })
+    } finally {
+        await session.close()
+    }
+}
+
+async function asyncForEach(array, callback) {
+    for (let index = 0; index < array.length; index++) {
+        await callback(array[index]);
+    }
+}
+
+async function getApolloServer() {
+    //TODO before releasing the app: remove the following line to enable persistance (it was disabled for debugging purposes)
+    await setDefaultData();
     return new ApolloServer({ schema: applyMiddleware(getSchema(), permissions), context: ({ req }) => { req.headers.authorization } });
 }
 
-function getMockedApolloServer(context) {
-    setDefaultData();
+async function getMockedApolloServer(context) {
+    await setDefaultData();
     return new ApolloServer({ schema: applyMiddleware(getSchema(), permissions), context: context });
 }
 
