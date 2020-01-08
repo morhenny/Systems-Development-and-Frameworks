@@ -4,7 +4,7 @@
       <input v-if="todo.done" type="checkbox" v-on:change="todoDone" checked disabled />
       <input v-else type="checkbox" v-on:change="todoDone" disabled />
       <input class="main-content" v-model="newTodoText" :placeholder="todo.text" />
-      <button @click="changeText()" class="button">Save</button>
+      <button @click="changeTodoText()" class="button">Save</button>
       <button @click="editing = !editing" class="button">Cancel</button>
     </div>
     <div v-else class="row">
@@ -30,7 +30,7 @@ export default {
     todoDone() {
       this.todo.done = !this.todo.done;
     },
-    changeText() {
+    changeTodoText() {
       if (this.newTodoText == "") {
         alert("You cannot give ToDos an empty name!");
         return;
