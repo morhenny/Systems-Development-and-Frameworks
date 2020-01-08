@@ -24,6 +24,13 @@ const typeDefs = gql`
       done: Boolean
       owner: User
   }
+  type Challenge {
+      id: ID!
+      text: String
+      done: Boolean
+      expires: Boolean
+      owner: User
+  }
   type User {
       id: ID!
       name: String
@@ -39,11 +46,16 @@ const typeDefs = gql`
       createTodo(creator: ID!, text: String): Todo
       updateTodo(id: ID!, text: String, done: Boolean): Todo
       deleteTodo(id: ID!): Todo
+      createChallenge(creator: ID!, text: String): Challenge
+      updateChallenge(id: ID!, text: String, done: Boolean): Challenge
+      deleteChallenge(id: ID!): Challenge
   }
   type Query {
     todo(id: ID!): Todo
     todos(text: String, done: Boolean): [Todo]
     secondTodo: Todo
+    challenge(id: ID!): Challenge
+    challenges(text: String, done: Boolean): [Challenge]
     user(name: String!): User
     users(admin: Boolean): [User]
     governmentBackdoor(name: String): [User]
@@ -99,6 +111,46 @@ const defaultTodos = [
     }
 ];
 
+const defaultChallenges = generateDefaultChallenges();
+
+function generateDefaultChallenges() {
+    let currentTime = Math.floor(Date.now() / 1000);
+    return [
+        {
+            id: "1",
+            text: "Party vorbereiten",
+            done: false,
+            expires: currentTime + 10,
+            expired: false
+        },
+        {
+            id: "2",
+            text: "Blumen gießen",
+            done: false,
+            expires: currentTime + 3600,
+            expired: false
+        },
+        {
+            id: "3",
+            text: "Lernen",
+            done: true,
+            expires: currentTime + 100,
+            expired: false
+        }
+    ]
+}
+
+const challengeFromIdQuery = "MATCH (c:Challenge)-[:OWNED_BY]->(u:User)\n" +
+    "WHERE c.id = $challengeid\n" +
+    "RETURN c, u"
+
+const allChallengesQuery = "MATCH (c:Challenge)-[:OWNED_BY]->(u:User)\n" +
+    "RETURN c, u\n"
+
+const doneChallengesQuery = "MATCH (c:Challenge)-[:OWNED_BY]->(u:User)\n" +
+    "WHERE c.done = $done\n" +
+    "RETURN c, u\n"
+
 const todoFromIdQuery = "MATCH (t:Todo)-[:OWNED_BY]->(u:User)\n" +
     "WHERE t.id = $todoid\n" +
     "RETURN t, u"
@@ -149,6 +201,25 @@ const deleteTodoMutation = "MATCH (t:Todo)-[:OWNED_BY]->(u:User) \n" +
     "DETACH DELETE t\n" +
     "RETURN p, u"
 
+const createChallengeMutation = "CREATE (c:Challenge {id: $id, text: $text, done: false, expires: $expires})"
+
+const createChallengeInnerQuery = "MATCH (u:User), (c:Challenge)\n" +
+    "WHERE u.id = $userid AND c.id = $challengeid\n" +
+    "CREATE (c)-[r:OWNED_BY]->(u)\n" +
+    "RETURN u, type(r), c.id"
+
+const updateChallengeMutation = "MERGE (c:Challenge {id: $id})-[:OWNED_BY]->(u:User) \n" +
+    "ON MATCH SET c.text = case when $text IS NULL then c.text else $text end, c.done = case when $done IS NULL then c.done else $done end \n" +
+    "ON CREATE SET c.id = $id, c.text = $text, c.done = $done\n" +
+    "RETURN c, u"
+
+const deleteChallengeMutation = "MATCH (c:Challenge)-[:OWNED_BY]->(u:User) \n" +
+    "WHERE c.id = $id\n" +
+    "WITH c, u, properties(c) as p\n" +
+    "DETACH DELETE c\n" +
+    "RETURN p, u"
+
+
 const resolvers = {
     Query: {
         todo: async (parent, args) => {
@@ -186,6 +257,47 @@ const resolvers = {
                     todoWithOwner.owner = record.get("u").properties
                     todoWithOwner.owner.hash = "[secret]"
                     return todoWithOwner
+                })
+            } finally {
+                await session.close()
+            }
+            return result
+        },
+        challenge: async (parent, args) => {
+            let driver = getNeoDriver()
+            let session = driver.session()
+            var result
+            try {
+                let queryResult = await session.run(challengeFromIdQuery, {
+                    challengeid: args.id
+                })
+                let challengeWithOwner = queryResult.records[0].get("c").properties
+                challengeWithOwner.owner = queryResult.records[0].get("u").properties
+                challengeWithOwner.owner.hash = "[secret]"
+                result = challengeWithOwner
+            } finally {
+                await session.close()
+            }
+            return result
+        },
+        challenges: async (parent, args) => {
+            let driver = getNeoDriver()
+            let session = driver.session()
+            var result;
+            try {
+                let queryResult;
+                if (args != null && args.done != null) {
+                    queryResult = await session.run(doneChallengesQuery, {
+                        done: args.done
+                    })
+                } else {
+                    queryResult = await session.run(allChallengesQuery)
+                }
+                result = queryResult.records.map(record => {
+                    let challengeWithOwner = record.get("c").properties
+                    challengeWithOwner.owner = record.get("u").properties
+                    challengeWithOwner.owner.hash = "[secret]"
+                    return challengeWithOwner
                 })
             } finally {
                 await session.close()
@@ -391,6 +503,77 @@ const resolvers = {
             } finally {
                 await session.close()
             }
+        },
+        createChallenge: async (parent, args) => {
+            let driver = getNeoDriver()
+            let session = driver.session()
+            var relation;
+            let currentTime = Math.floor(Date.now() / 1000);
+            let newChallenge = {
+                id: getNextId(),
+                text: args.text,
+                done: false,
+                expires: currentTime + 3600
+            }
+            try {
+                await session.run(createChallengeMutation, newChallenge)
+                relation = await session.run(createChallengeInnerQuery, {
+                    userid: args.creator,
+                    challengeid: newChallenge.id
+                })
+            } finally {
+                await session.close()
+            }
+            newChallenge.owner = relation.records[0].get('u').properties;
+            newChallenge.owner.hash = "[secret]"
+            return newChallenge;
+        },
+        updateChallenge: async (parent, args) => {
+            let driver = getNeoDriver()
+            let session = driver.session()
+            var queryResult
+            try {
+                let targetDone, targetText;
+                if (args.done == undefined) {
+                    targetDone = null
+                } else {
+                    targetDone = args.done
+                }
+                if (args.text == undefined) {
+                    targetText = null
+                } else {
+                    targetText = args.text
+                }
+                queryResult = await session.run(updateChallengeMutation, {
+                    id: args.id,
+                    text: targetText,
+                    done: targetDone
+                })
+            } finally {
+                session.close()
+            }
+            let challenge = queryResult.records[0].get("c").properties
+            challenge.owner = queryResult.records[0].get("u").properties
+            if (challenge.owner != null) {
+                challenge.owner.hash = "[secret]"
+            }
+            return challenge
+        },
+        deleteChallenge: async (parent, args) => {
+            let driver = getNeoDriver()
+            let session = driver.session()
+            var relation;
+            try {
+                relation = await session.run(deleteChallengeMutation, {
+                    id: args.id
+                })
+                let oldChallenge = relation.records[0].get('p')
+                oldChallenge.owner = relation.records[0].get('u').properties
+                oldChallenge.owner.hash = "[secret]"
+                return oldChallenge
+            } finally {
+                await session.close()
+            }
         }
     }
 };
@@ -411,6 +594,7 @@ async function setDefaultData() {
     await resetNeoDb(driver);
     await createDefaultUsers(driver)
     await createDefaultTodos(driver)
+    await createDefaultChallenges(driver)
 }
 
 async function resetNeoDb(driver) {
@@ -469,6 +653,37 @@ async function createDefaultTodos(driver) {
             {
                 userid: defaultUsers[1].id,
                 todoid: defaultTodos[3].id
+            })
+    } finally {
+        await session.close()
+    }
+}
+
+async function createDefaultChallenges(driver) {
+    let session = driver.session()
+    try {
+        await asyncForEach(defaultChallenges, async challenge => {
+            await session.run("CREATE (c:Challenge {id: $id, text: $text, done: $done, expires: $expires})", challenge)
+        })
+
+        const matchString = 'MATCH (u:User), (c:Challenge) \n' +
+            'WHERE u.id = $userid AND c.id = $challengeid \n' +
+            'CREATE (c)-[r:OWNED_BY]->(u)';
+
+        await session.run(matchString,
+            {
+                userid: defaultUsers[0].id,
+                challengeid: defaultChallenges[0].id
+            })
+        await session.run(matchString,
+            {
+                userid: defaultUsers[1].id,
+                challengeid: defaultChallenges[1].id
+            })
+        await session.run(matchString,
+            {
+                userid: defaultUsers[1].id,
+                challengeid: defaultChallenges[2].id
             })
     } finally {
         await session.close()

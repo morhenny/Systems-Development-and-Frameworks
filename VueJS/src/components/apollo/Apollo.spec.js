@@ -50,6 +50,54 @@ const doneTodosQuery = gql`
 	}
 `;
 
+const singleChallengeQuery = gql`
+	query GetChallengeQuery($id: ID!) {
+		challenge(id: $id) {
+			id
+            text
+            done
+            owner {
+                id
+                name
+                hash
+                admin
+            }
+		}
+	}
+`;
+
+const allChallengesQuery = gql`
+	query GetAllChallengesQuery {
+		challenges {
+			id
+			text
+            done
+            owner {
+                id
+                name
+                hash
+                admin
+            }
+		}
+	}
+`;
+
+const doneChallengesQuery = gql`
+	query GetDoneChallengesQuery($done: Boolean) {
+		challenges(done: $done) {
+			id
+			text
+            done
+            owner {
+                id
+                name
+                hash
+                admin
+            }
+		}
+	}
+`;
+
 const allUsersQuery = gql`
 	query GetAllUsersQuery($admin: Boolean) {
 		users(admin: $admin) {
@@ -146,6 +194,54 @@ const deleteTodoMutation = gql`
 	}
 `;
 
+const createChallengeMutation = gql`
+	mutation createChallengeMutation($creator: ID!, $text: String) {
+		createChallenge(creator: $creator, text: $text) {
+            id
+            text
+            done
+            owner {
+			    id
+                name
+                hash
+                admin
+            }
+		}
+	}
+`;
+
+const updateChallengeMutation = gql`
+	mutation updateChallengeMutation($id: ID!, $text: String, $done: Boolean) {
+		updateChallenge(id: $id, text: $text, done: $done) {
+			id
+            text
+            done
+            owner {
+                id
+                name
+                hash
+                admin
+            }
+        }
+    }
+`;
+
+const deleteChallengeMutation = gql`
+	mutation deleteChallengeMutation($id: ID!) {
+		deleteChallenge(id: $id) {
+			id
+            text
+            done
+            owner {
+                id
+                name
+                hash
+                admin
+            }
+		}
+	}
+`;
+
 function expectNoError(result) {
     expect(result.errors).toBe(undefined);
     return result;
@@ -204,6 +300,62 @@ describe('Queries for Todos', () => {
         expect(result.data.todo.owner.name).toBeDefined()
         expect(result.data.todo.owner.hash).toEqual("[secret]")
         expect(result.data.todo.owner.admin).toBeDefined()
+    });
+});
+
+describe('Queries for Challenges', () => {
+    let query;
+    beforeEach(async () => {
+        const testServer = await getMockedApolloServer();
+        const testClient = createTestClient(testServer);
+        query = testClient.query;
+    });
+
+    it('Query all Challenges', async () => {
+        const result = expectNoError(await query({
+            query: allChallengesQuery,
+        }));
+        expect(result.data.challenges.length).toBe(3);
+        result.data.challenges.forEach(challenge => {
+            expect(challenge.owner).toBeDefined()
+            expect(challenge.owner.id).toBeDefined()
+            expect(challenge.owner.name).toBeDefined()
+            expect(challenge.owner.hash).toEqual("[secret]")
+            expect(challenge.owner.admin).toBeDefined()
+        });
+    });
+
+    it('Query done Challenges', async () => {
+        const result = expectNoError(await query({
+            query: doneChallengesQuery,
+            variables: { done: true },
+        }));
+        expect(result.data.challenges).toMatchObject([{ done: true }]);
+        expect(result.data.challenges.length).toBeGreaterThan(0);
+        result.data.challenges.forEach(challenge => {
+            expect(challenge.owner).toBeDefined()
+            expect(challenge.owner.id).toBeDefined()
+            expect(challenge.owner.name).toBeDefined()
+            expect(challenge.owner.hash).toEqual("[secret]")
+            expect(challenge.owner.admin).toBeDefined()
+        });
+    });
+
+    it('Query single Challenge by id', async () => {
+        const result = expectNoError(await query({
+            query: singleChallengeQuery,
+            variables: { id: 1 },
+        }));
+        expect(result.data.challenge).toMatchObject({
+            id: "1",            //The GraphQL-type 'ID' is converted to string
+            text: "Party vorbereiten",
+            done: false
+        });
+        expect(result.data.challenge.owner).toBeDefined()
+        expect(result.data.challenge.owner.id).toBeDefined()
+        expect(result.data.challenge.owner.name).toBeDefined()
+        expect(result.data.challenge.owner.hash).toEqual("[secret]")
+        expect(result.data.challenge.owner.admin).toBeDefined()
     });
 });
 
@@ -367,6 +519,98 @@ describe('Mutations for Todos', () => {
         expect(resultAllTodos.data.todos.length).toBe(3);
         expect(resultAllTodos.data.todos).not.toEqual(expect.arrayContaining([expect.objectContaining({
             id: "4"
+        })]));
+    });
+});
+
+describe('Mutations for Challenges', () => {
+    let query;
+    let mutate;
+
+    beforeEach(async () => {
+        const testServer = await getMockedApolloServer();
+        const testClient = createTestClient(testServer);
+        query = testClient.query;
+        mutate = testClient.mutate;
+    });
+
+    it('Create a Challenge', async () => {
+        const result = expectNoError(await mutate({
+            mutation: createChallengeMutation,
+            variables: {
+                text: "Duschen",
+                creator: "2"
+            }
+        }));
+        expect(result.data.createChallenge).toMatchObject({
+            text: "Duschen",
+            done: false
+        });
+        expect(result.data.createChallenge.owner).toBeDefined()
+        expect(result.data.createChallenge.owner.id).toBeDefined()
+        expect(result.data.createChallenge.owner.name).toBeDefined()
+        expect(result.data.createChallenge.owner.hash).toEqual("[secret]")
+        expect(result.data.createChallenge.owner.admin).toBeDefined()
+    });
+
+    it('Update a Challenge text', async () => {
+        const result = expectNoError(await mutate({
+            mutation: updateChallengeMutation,
+            variables: { id: "2", text: "Bei [Supermarkt] einkaufen" }
+        }));
+
+        expect(result.data.updateChallenge).toMatchObject({
+            id: "2",
+            text: "Bei [Supermarkt] einkaufen",
+            done: false
+        });
+        expect(result.data.updateChallenge.owner).toBeDefined()
+        expect(result.data.updateChallenge.owner.id).toBeDefined()
+        expect(result.data.updateChallenge.owner.name).toBeDefined()
+        expect(result.data.updateChallenge.owner.hash).toEqual("[secret]")
+        expect(result.data.updateChallenge.owner.admin).toBeDefined()
+    });
+
+    it('Mark a Challenge as done', async () => {
+        const result = expectNoError(await mutate({
+            mutation: updateChallengeMutation,
+            variables: { id: "1", done: true }
+        }));
+
+        expect(result.data.updateChallenge).toMatchObject({
+            id: "1",
+            text: "Party vorbereiten",
+            done: true
+        });
+        expect(result.data.updateChallenge.owner).toBeDefined()
+        expect(result.data.updateChallenge.owner.id).toBeDefined()
+        expect(result.data.updateChallenge.owner.name).toBeDefined()
+        expect(result.data.updateChallenge.owner.hash).toEqual("[secret]")
+        expect(result.data.updateChallenge.owner.admin).toBeDefined()
+    });
+
+    it('Delete a Challenge', async () => {
+        const result = expectNoError(await mutate({
+            mutation: deleteChallengeMutation,
+            variables: { id: 3 }
+        }));
+        expect(result.data.deleteChallenge).toMatchObject({
+            id: "3",
+            text: "Lernen",
+            done: true
+        });
+        expect(result.data.deleteChallenge.owner).toBeDefined()
+        expect(result.data.deleteChallenge.owner.id).toBeDefined()
+        expect(result.data.deleteChallenge.owner.name).toBeDefined()
+        expect(result.data.deleteChallenge.owner.hash).toEqual("[secret]")
+        expect(result.data.deleteChallenge.owner.admin).toBeDefined()
+
+        const resultAllChallenges = expectNoError(await query({
+            query: allChallengesQuery,
+        }));
+        expect(resultAllChallenges.data.challenges.length).toBe(2);
+        expect(resultAllChallenges.data.challenges).not.toEqual(expect.arrayContaining([expect.objectContaining({
+            id: "3"
         })]));
     });
 });
